@@ -246,7 +246,7 @@ class FlowNet2S(FlowNetS.FlowNetS):
         super(FlowNet2S,self).__init__(args, batchNorm=batchNorm)
         self.rgb_max = args.rgb_max
 
-    def forward(self, x):
+    def forward(self, inputs):
         rgb_mean = inputs.contiguous().view(inputs.size()[:2]+(-1,)).mean(dim=-1).view(inputs.size()[:2] + (1,1,1,))
         x = (inputs - rgb_mean) / self.rgb_max
         out_conv1 = self.conv1(x)
@@ -289,7 +289,7 @@ class FlowNet2SD(FlowNetSD.FlowNetSD):
         super(FlowNet2SD,self).__init__(args, batchNorm=batchNorm)
         self.rgb_max = args.rgb_max
 
-    def forward(self, x):
+    def forward(self, inputs):
         rgb_mean = inputs.contiguous().view(inputs.size()[:2]+(-1,)).mean(dim=-1).view(inputs.size()[:2] + (1,1,1,))
         x = (inputs - rgb_mean) / self.rgb_max
         

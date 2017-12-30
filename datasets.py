@@ -1,23 +1,26 @@
+import random
+from glob import glob
+from os.path import *
+
+import numpy as np
 import torch
 import torch.utils.data as data
 
-import os, math, random
-from os.path import *
-import numpy as np
-
-from glob import glob
 import utils.frame_utils as frame_utils
 
-from scipy.misc import imread, imresize
 
 class StaticRandomCrop(object):
     def __init__(self, size):
         self.th, self.tw = size
+        self.h1 = None
+        self.w1 = None
     def __call__(self, img):
         h, w, _ = img.shape
-        h1 = random.randint(0, h - self.th)
-        w1 = random.randint(0, w - self.tw)
-        return img[h1:(h1+self.th), w1:(w1+self.tw),:]
+        if self.h1 is None:
+            self.h1 = random.randint(0, h - self.th)
+        if self.w1 is None:
+            self.w1 = random.randint(0, w - self.tw)
+        return img[self.h1:(self.h1+self.th), self.w1:(self.w1+self.tw),:]
 
 class StaticCenterCrop(object):
     def __init__(self, size):
@@ -192,15 +195,14 @@ class FlyingThings(data.Dataset):
 
     for idir, fdir in zip(image_dirs, flow_dirs):
         images = sorted( glob(join(idir, '*.png')) )
-        flows = sorted( glob(join(fdir, '*.flo')) )
-        for i in range(len(flows)):
+        flows = sorted( glob(join(fdir, '*.pfm')) )
+        for i in range(len(flows)-1):
             self.image_list += [ [ images[i], images[i+1] ] ]
             self.flow_list += [flows[i]]
 
     assert len(self.image_list) == len(self.flow_list)
 
     self.size = len(self.image_list)
-
     self.frame_size = frame_utils.read_gen(self.image_list[0][0]).shape
 
     if (self.render_size[0] < 0) or (self.render_size[1] < 0) or (self.frame_size[0]%64) or (self.frame_size[1]%64):
@@ -245,6 +247,145 @@ class FlyingThingsClean(FlyingThings):
 class FlyingThingsFinal(FlyingThings):
     def __init__(self, args, is_cropped = False, root = '', replicates = 1):
         super(FlyingThingsFinal, self).__init__(args, is_cropped = is_cropped, root = root, dstype = 'frames_finalpass', replicates = replicates)
+
+class Driving(data.Dataset):
+    def __init__(self, args, is_cropped, root='~/data/driving', dstype='frames_cleanpass', replicates=1):
+        self.args = args
+        self.is_cropped = is_cropped
+        self.crop_size = args.crop_size
+        self.render_size = args.inference_size
+        self.replicates = replicates
+
+        image_dirs = sorted(glob(join(root, dstype, '*/*/*')))
+        image_dirs = sorted([join(f, 'left') for f in image_dirs] + [join(f, 'right') for f in image_dirs])
+
+        flow_dirs = sorted(glob(join(root, 'optical_flow_flo_format/*/*/*')))
+        flow_dirs = sorted(
+            [join(f, 'into_future/left') for f in flow_dirs] + [join(f, 'into_future/right') for f in flow_dirs])
+
+        assert (len(image_dirs) == len(flow_dirs))
+
+        self.image_list = []
+        self.flow_list = []
+
+        for idir, fdir in zip(image_dirs, flow_dirs):
+            images = sorted(glob(join(idir, '*.png')))
+            flows = sorted(glob(join(fdir, '*.pfm')))
+            for i in range(len(flows) - 1):
+                self.image_list += [[images[i], images[i + 1]]]
+                self.flow_list += [flows[i]]
+
+        assert len(self.image_list) == len(self.flow_list)
+
+        print(len(self.image_list))
+        self.size = len(self.image_list)
+        self.frame_size = frame_utils.read_gen(self.image_list[0][0]).shape
+
+        if (self.render_size[0] < 0) or (self.render_size[1] < 0) or (self.frame_size[0] % 64) or (
+            self.frame_size[1] % 64):
+            self.render_size[0] = ((self.frame_size[0]) / 64) * 64
+            self.render_size[1] = ((self.frame_size[1]) / 64) * 64
+
+        args.inference_size = self.render_size
+
+    def __getitem__(self, index):
+        index = index % self.size
+
+        img1 = frame_utils.read_gen(self.image_list[index][0])
+        img2 = frame_utils.read_gen(self.image_list[index][1])
+
+        flow = frame_utils.read_gen(self.flow_list[index])
+
+        images = [img1, img2]
+        if self.is_cropped:
+            cropper = StaticRandomCrop(self.crop_size)
+            images = map(cropper, images)
+            flow = cropper(flow)
+        else:
+            cropper = StaticCenterCrop(self.render_size)
+            images = map(cropper, images)
+            flow = cropper(flow)
+
+        images = np.array(images).transpose(3, 0, 1, 2)
+        flow = flow.transpose(2, 0, 1)
+
+        images = torch.from_numpy(images.astype(np.float32))
+        flow = torch.from_numpy(flow.astype(np.float32))
+
+        return [images], [flow]
+
+    def __len__(self):
+        return self.size * self.replicates
+
+class Monkaa(data.Dataset):
+    def __init__(self, args, is_cropped, root='~/data/monkaa', dstype='frames_cleanpass', replicates=1):
+        self.args = args
+        self.is_cropped = is_cropped
+        self.crop_size = args.crop_size
+        self.render_size = args.inference_size
+        self.replicates = replicates
+
+        image_dirs = sorted(glob(join(root, dstype, '*')))
+        image_dirs = sorted([join(f, 'left') for f in image_dirs] + [join(f, 'right') for f in image_dirs])
+
+        flow_dirs = sorted(glob(join(root, 'optical_flow_flo_format/*')))
+        flow_dirs = sorted(
+            [join(f, 'into_future/left') for f in flow_dirs] + [join(f, 'into_future/right') for f in flow_dirs])
+
+        assert (len(image_dirs) == len(flow_dirs))
+
+        self.image_list = []
+        self.flow_list = []
+
+        for idir, fdir in zip(image_dirs, flow_dirs):
+            images = sorted(glob(join(idir, '*.png')))
+            flows = sorted(glob(join(fdir, '*.pfm')))
+            for i in range(len(flows) - 1):
+                self.image_list += [[images[i], images[i + 1]]]
+                self.flow_list += [flows[i]]
+
+        assert len(self.image_list) == len(self.flow_list)
+
+        print(len(self.image_list))
+        self.size = len(self.image_list)
+        self.frame_size = frame_utils.read_gen(self.image_list[0][0]).shape
+
+        if (self.render_size[0] < 0) or (self.render_size[1] < 0) or (self.frame_size[0] % 64) or (
+            self.frame_size[1] % 64):
+            self.render_size[0] = ((self.frame_size[0]) / 64) * 64
+            self.render_size[1] = ((self.frame_size[1]) / 64) * 64
+
+        args.inference_size = self.render_size
+
+    def __getitem__(self, index):
+        index = index % self.size
+
+        img1 = frame_utils.read_gen(self.image_list[index][0])
+        img2 = frame_utils.read_gen(self.image_list[index][1])
+
+        flow = frame_utils.read_gen(self.flow_list[index])
+
+        images = [img1, img2]
+        if self.is_cropped:
+            cropper = StaticRandomCrop(self.crop_size)
+            images = map(cropper, images)
+            flow = cropper(flow)
+        else:
+            cropper = StaticCenterCrop(self.render_size)
+            images = map(cropper, images)
+            flow = cropper(flow)
+
+        images = np.array(images).transpose(3, 0, 1, 2)
+        flow = flow.transpose(2, 0, 1)
+
+        images = torch.from_numpy(images.astype(np.float32))
+        flow = torch.from_numpy(flow.astype(np.float32))
+
+        return [images], [flow]
+
+    def __len__(self):
+        return self.size * self.replicates
+
 
 class ChairsSDHom(data.Dataset):
   def __init__(self, args, is_cropped, root = '/path/to/chairssdhom/data', dstype = 'train', replicates = 1):
