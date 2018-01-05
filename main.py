@@ -1,6 +1,7 @@
 #!/usr/bin/env python
-
+import scipy.misc
 import torch
+import torchvision
 import torch.nn as nn
 from torch.utils.data import DataLoader
 from torch.autograd import Variable
@@ -141,7 +142,7 @@ if __name__ == '__main__':
             block.log('Validation Dataset: {}'.format(args.validation_dataset))
             block.log('Validation Input: {}'.format(' '.join([str([d for d in x.size()]) for x in validation_dataset[0][0]])))
             block.log('Validation Targets: {}'.format(' '.join([str([d for d in x.size()]) for x in validation_dataset[0][1]])))
-            validation_loader = DataLoader(validation_dataset, batch_size=args.effective_batch_size, shuffle=False, **gpuargs)
+            validation_loader = DataLoader(validation_dataset, batch_size=args.effective_batch_size, shuffle=True, **gpuargs)
 
         if exists(args.inference_dataset_root):
             inference_dataset = args.inference_dataset_class(args, False, **tools.kwargs_from_args(args, 'inference_dataset'))
@@ -166,7 +167,7 @@ if __name__ == '__main__':
                 loss_values = self.loss(output, target)
 
                 if not inference :
-                    return loss_values
+                    return [i ** 0.4 for i in loss_values]
                 else :
                     return loss_values, output
 
@@ -197,13 +198,22 @@ if __name__ == '__main__':
             torch.manual_seed(args.seed)
 
         # Load weights if needed, otherwise randomly initialize
-        if args.resume and os.path.isfile(args.resume):
+        if args.resume:
             block.log("Loading checkpoint '{}'".format(args.resume))
             checkpoint = torch.load(args.resume)
             if not args.inference:
                 args.start_epoch = checkpoint['epoch']
             best_err = checkpoint['best_EPE']
-            model_and_loss.module.model.load_state_dict(checkpoint['state_dict'])
+            model_and_loss.module.model.load_state_dict(checkpoint['state_dict'],strict=False)
+            # """
+            # temporary load
+            # """
+            #model_and_loss.module.model.flownetc.load_state_dict(checkpoint['state_dict'])
+            #
+            # for param in model_and_loss.module.model.flownets_1.parameters():
+            #      param.requires_grad = False
+            # for (param1,param2) in zip(model_and_loss.module.model.flownets_1.parameters(),model_and_loss.module.model.flownets_2.parameters()):
+            #     param2.data[:] = param1.data[:]
             block.log("Loaded checkpoint '{}' (at epoch {})".format(args.resume, checkpoint['epoch']))
 
         elif args.resume and args.inference:
@@ -219,6 +229,8 @@ if __name__ == '__main__':
 
         train_logger = SummaryWriter(log_dir = os.path.join(args.save, 'train'), comment = 'training')
         validation_logger = SummaryWriter(log_dir = os.path.join(args.save, 'validation'), comment = 'validation')
+        if args.inference:
+            inference_logger = SummaryWriter(log_dir=os.path.join(args.save, 'inference'), comment='inference')
 
     # Dynamically load the optimizer with parameters passed in via "--optimizer_[param]=[value]" arguments 
     with tools.TimerBlock("Initializing {} Optimizer".format(args.optimizer)) as block:
@@ -242,12 +254,12 @@ if __name__ == '__main__':
         if is_validate:
             model.eval()
             title = 'Validating Epoch {}'.format(epoch)
-            args.validation_n_batches = np.inf if args.validation_n_batches < 0 else args.validation_n_batches
+            args.validation_n_batches = len(data_loader)-1 if args.validation_n_batches < 0 else args.validation_n_batches
             progress = tqdm(tools.IteratorTimer(data_loader), ncols=100, total=np.minimum(len(data_loader), args.validation_n_batches), leave=True, position=offset, desc=title)
         else:
             model.train()
             title = 'Training Epoch {}'.format(epoch)
-            args.train_n_batches = np.inf if args.train_n_batches < 0 else args.train_n_batches
+            args.train_n_batches = len(data_loader)-1 if args.train_n_batches < 0 else args.train_n_batches
             progress = tqdm(tools.IteratorTimer(data_loader), ncols=120, total=np.minimum(len(data_loader), args.train_n_batches), smoothing=.9, miniters=1, leave=True, position=offset, desc=title)
 
         last_log_time = progress._time()
@@ -260,7 +272,7 @@ if __name__ == '__main__':
             optimizer.zero_grad() if not is_validate else None
             losses = model(data[0], target[0])
             losses = [torch.mean(loss_value) for loss_value in losses] 
-            loss_val = losses[0] # Collect first loss for weight update
+            loss_val = losses[1] # Collect first loss for weight update
             total_loss += loss_val.data[0]
             loss_values = [v.data[0] for v in losses]
 
@@ -302,7 +314,10 @@ if __name__ == '__main__':
             statistics.append(loss_values)
             title = '{} Epoch {}'.format('Validating' if is_validate else 'Training', epoch)
 
-            progress.set_description(title + ' ' + tools.format_dictionary_of_losses(loss_labels, statistics[-1]))
+            if (type(loss_labels[0]) is list) or (type(loss_labels[0]) is tuple):
+                progress.set_description(title + ' ' + tools.format_dictionary_of_losses(loss_labels[0], statistics[-1]))
+            else:
+                progress.set_description(title + ' ' + tools.format_dictionary_of_losses(loss_labels, statistics[-1]))
 
             if ((((global_iteration + 1) % args.log_frequency) == 0 and not is_validate) or
                 (is_validate and batch_idx == args.validation_n_batches - 1)):
@@ -314,9 +329,23 @@ if __name__ == '__main__':
 
                 all_losses = np.array(statistics)
 
-                for i, key in enumerate(loss_labels):
-                    logger.add_scalar('average batch ' + key, all_losses[:, i].mean(), global_iteration)
-                    logger.add_histogram(key, all_losses[:, i], global_iteration)
+                for i, key in enumerate(loss_labels[0] if (type(loss_labels[0]) is list) or (type(loss_labels[0]) is tuple) else loss_labels):
+                    logger.add_scalar('average batch ' + str(key), all_losses[:, i].mean(), global_iteration)
+                    #logger.add_histogram(str(key), all_losses[:, i], global_iteration)
+                if is_validate:
+                    _, output = model(data[0], target[0],inference=True)
+                    render_flow = output[0].data.cpu().numpy().transpose(1,2,0)
+                    ground_truth = target[0][0].data.cpu().numpy().transpose(1,2,0)
+                    render_img = tools.flow_to_image(render_flow).transpose(2,0,1)
+                    true_img = tools.flow_to_image(ground_truth).transpose(2,0,1)
+                    render_img = torch.Tensor(render_img)/255.0
+                    true_img = torch.Tensor(true_img)/255.0
+                    input_img = data[0][0,:,0,:,:].data.cpu()/255.0
+                    logger.add_image('renderimg', torchvision.utils.make_grid(render_img), global_iteration)
+                    logger.add_image('ground_truth', torchvision.utils.make_grid(true_img), global_iteration)
+                    logger.add_image('input_img', torchvision.utils.make_grid(input_img), global_iteration)
+
+
 
             # Reset Summary
             statistics = []
@@ -332,14 +361,17 @@ if __name__ == '__main__':
         return total_loss / float(batch_idx + 1), (batch_idx + 1)
 
     # Reusable function for inference
-    def inference(args, epoch, data_loader, model, offset=0):
+    def inference(args, epoch, data_loader, logger, model, offset=0):
 
         model.eval()
 
         if args.save_flow or args.render_validation:
             flow_folder = "{}/{}.epoch-{}-flow-field".format(args.inference_dir,args.name.replace('/', '.'),epoch)
+            rendered_flow_folder = "{}/{}.epoch-{}-rendered-flow-field".format(args.inference_dir, args.name.replace('/', '.'), epoch)
             if not os.path.exists(flow_folder):
                 os.makedirs(flow_folder)
+            if not os.path.exists(rendered_flow_folder):
+                os.makedirs(rendered_flow_folder)
 
         
         args.inference_n_batches = np.inf if args.inference_n_batches < 0 else args.inference_n_batches
@@ -372,7 +404,18 @@ if __name__ == '__main__':
             if args.save_flow or args.render_validation:
                 for i in range(args.inference_batch_size):
                     _pflow = output[i].data.cpu().numpy().transpose(1, 2, 0)
-                    flow_utils.writeFlow( join(flow_folder, '%06d.flo'%(batch_idx * args.inference_batch_size + i)),  _pflow)
+                    ground_truth = target[0][i].data.cpu().numpy().transpose(1, 2, 0)
+                    render_img = tools.flow_to_image(_pflow).transpose(2, 0, 1)
+                    true_img = tools.flow_to_image(ground_truth).transpose(2, 0, 1)
+                    render_img = torch.Tensor(render_img) / 255.0
+                    true_img = torch.Tensor(true_img) / 255.0
+                    input_img = data[0][i, :, 0, :, :].data.cpu() / 255.0
+                    logger.add_image('renderimg', torchvision.utils.make_grid(render_img), batch_idx * args.inference_batch_size + i)
+                    logger.add_image('ground_truth', torchvision.utils.make_grid(true_img), batch_idx * args.inference_batch_size + i)
+                    logger.add_image('input_img', torchvision.utils.make_grid(input_img), batch_idx * args.inference_batch_size + i)
+                    if args.save_flow:
+                        scipy.misc.imsave(join(rendered_flow_folder, '%06d.png'%(batch_idx * args.inference_batch_size + i)), render_img.numpy().transpose(1,2,0))
+                        flow_utils.writeFlow( join(flow_folder, '%06d.flo'%(batch_idx * args.inference_batch_size + i)),  _pflow)
 
             progress.set_description('Inference Averages for Epoch {}: '.format(epoch) + tools.format_dictionary_of_losses(loss_labels, np.array(statistics).mean(axis=0)))
             progress.update(1)
@@ -389,11 +432,11 @@ if __name__ == '__main__':
     progress = tqdm(range(args.start_epoch, args.total_epochs + 1), miniters=1, ncols=100, desc='Overall Progress', leave=True, position=0)
     offset = 1
     last_epoch_time = progress._time()
-    global_iteration = 0
+    global_iteration = checkpoint['global_iteration'] if args.resume and os.path.isfile(args.resume) and 'global_iteration' in checkpoint else 0
 
     for epoch in progress:
         if args.inference or (args.render_validation and ((epoch - 1) % args.validation_frequency) == 0):
-            stats = inference(args=args, epoch=epoch - 1, data_loader=inference_loader, model=model_and_loss, offset=offset)
+            stats = inference(args=args, epoch=epoch - 1, data_loader=inference_loader, logger=inference_logger, model=model_and_loss, offset=offset)
             offset += 1
 
         if not args.skip_validation and ((epoch - 1) % args.validation_frequency) == 0:
@@ -409,7 +452,8 @@ if __name__ == '__main__':
             tools.save_checkpoint({   'arch' : args.model,
                                       'epoch': epoch,
                                       'state_dict': model_and_loss.module.model.state_dict(),
-                                      'best_EPE': best_err}, 
+                                      'best_EPE': best_err,
+                                      'global_iteration': global_iteration},
                                       is_best, args.save, args.model)
             checkpoint_progress.update(1)
             checkpoint_progress.close()
@@ -421,15 +465,16 @@ if __name__ == '__main__':
             offset += 1
 
             # save checkpoint after every validation_frequency number of epochs
-            if ((epoch - 1) % args.validation_frequency) == 0:
-                checkpoint_progress = tqdm(ncols=100, desc='Saving Checkpoint', position=offset)
-                tools.save_checkpoint({   'arch' : args.model,
-                                          'epoch': epoch,
-                                          'state_dict': model_and_loss.module.model.state_dict(),
-                                          'best_EPE': train_loss}, 
-                                          False, args.save, args.model, filename = 'train-checkpoint.pth.tar')
-                checkpoint_progress.update(1)
-                checkpoint_progress.close()
+
+            checkpoint_progress = tqdm(ncols=100, desc='Saving Checkpoint', position=offset)
+            tools.save_checkpoint({   'arch' : args.model,
+                                      'epoch': epoch,
+                                      'state_dict': model_and_loss.module.model.state_dict(),
+                                      'best_EPE': train_loss,
+                                      'global_iteration': global_iteration},
+                                      False, args.save, args.model, filename = 'train-checkpoint.pth.tar')
+            checkpoint_progress.update(1)
+            checkpoint_progress.close()
 
 
         train_logger.add_scalar('seconds per epoch', progress._time() - last_epoch_time, epoch)
