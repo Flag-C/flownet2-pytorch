@@ -289,8 +289,11 @@ Load a PFM file into a Numpy array. Note that it will have
 a shape of H x W, not W x H. Returns a tuple containing the
 loaded image and the scale factor from the file.
 '''
-def load_pfm(file_name):
-    file = open(file_name)
+
+
+def readPFM(file):
+    file = open(file, 'rb')
+
     color = None
     width = None
     height = None
@@ -320,19 +323,21 @@ def load_pfm(file_name):
 
     data = np.fromfile(file, endian + 'f')
     shape = (height, width, 3) if color else (height, width)
-    file.close()
-    return np.reshape(data, shape)
+
+    data = np.reshape(data, shape)
+    data = np.flipud(data)
+    return data
 
 
-'''
-Save a Numpy array to a PFM file.
-'''
-def save_pfm(file_name, image, scale=1):
-    file = open(file_name)
+def writePFM(file, image, scale=1):
+    file = open(file, 'wb')
+
     color = None
 
     if image.dtype.name != 'float32':
         raise Exception('Image dtype must be float32.')
+
+    image = np.flipud(image)
 
     if len(image.shape) == 3 and image.shape[2] == 3:  # color image
         color = True

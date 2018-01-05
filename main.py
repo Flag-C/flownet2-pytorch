@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-
+import scipy.misc
 import torch
 import torchvision
 import torch.nn as nn
@@ -167,7 +167,7 @@ if __name__ == '__main__':
                 loss_values = self.loss(output, target)
 
                 if not inference :
-                    return loss_values
+                    return [i ** 0.4 for i in loss_values]
                 else :
                     return loss_values, output
 
@@ -198,13 +198,22 @@ if __name__ == '__main__':
             torch.manual_seed(args.seed)
 
         # Load weights if needed, otherwise randomly initialize
-        if args.resume and os.path.isfile(args.resume):
+        if args.resume:
             block.log("Loading checkpoint '{}'".format(args.resume))
             checkpoint = torch.load(args.resume)
             if not args.inference:
                 args.start_epoch = checkpoint['epoch']
             best_err = checkpoint['best_EPE']
-            model_and_loss.module.model.load_state_dict(checkpoint['state_dict'])
+            model_and_loss.module.model.load_state_dict(checkpoint['state_dict'],strict=False)
+            # """
+            # temporary load
+            # """
+            #model_and_loss.module.model.flownetc.load_state_dict(checkpoint['state_dict'])
+            #
+            # for param in model_and_loss.module.model.flownets_1.parameters():
+            #      param.requires_grad = False
+            # for (param1,param2) in zip(model_and_loss.module.model.flownets_1.parameters(),model_and_loss.module.model.flownets_2.parameters()):
+            #     param2.data[:] = param1.data[:]
             block.log("Loaded checkpoint '{}' (at epoch {})".format(args.resume, checkpoint['epoch']))
 
         elif args.resume and args.inference:
@@ -263,7 +272,7 @@ if __name__ == '__main__':
             optimizer.zero_grad() if not is_validate else None
             losses = model(data[0], target[0])
             losses = [torch.mean(loss_value) for loss_value in losses] 
-            loss_val = losses[0] # Collect first loss for weight update
+            loss_val = losses[1] # Collect first loss for weight update
             total_loss += loss_val.data[0]
             loss_values = [v.data[0] for v in losses]
 
@@ -358,8 +367,11 @@ if __name__ == '__main__':
 
         if args.save_flow or args.render_validation:
             flow_folder = "{}/{}.epoch-{}-flow-field".format(args.inference_dir,args.name.replace('/', '.'),epoch)
+            rendered_flow_folder = "{}/{}.epoch-{}-rendered-flow-field".format(args.inference_dir, args.name.replace('/', '.'), epoch)
             if not os.path.exists(flow_folder):
                 os.makedirs(flow_folder)
+            if not os.path.exists(rendered_flow_folder):
+                os.makedirs(rendered_flow_folder)
 
         
         args.inference_n_batches = np.inf if args.inference_n_batches < 0 else args.inference_n_batches
@@ -402,8 +414,8 @@ if __name__ == '__main__':
                     logger.add_image('ground_truth', torchvision.utils.make_grid(true_img), batch_idx * args.inference_batch_size + i)
                     logger.add_image('input_img', torchvision.utils.make_grid(input_img), batch_idx * args.inference_batch_size + i)
                     if args.save_flow:
+                        scipy.misc.imsave(join(rendered_flow_folder, '%06d.png'%(batch_idx * args.inference_batch_size + i)), render_img.numpy().transpose(1,2,0))
                         flow_utils.writeFlow( join(flow_folder, '%06d.flo'%(batch_idx * args.inference_batch_size + i)),  _pflow)
-                    flow_utils.writeFlow( join(flow_folder, '%06d.flo'%(batch_idx * args.inference_batch_size + i)),  _pflow)
 
             progress.set_description('Inference Averages for Epoch {}: '.format(epoch) + tools.format_dictionary_of_losses(loss_labels, np.array(statistics).mean(axis=0)))
             progress.update(1)
@@ -420,7 +432,7 @@ if __name__ == '__main__':
     progress = tqdm(range(args.start_epoch, args.total_epochs + 1), miniters=1, ncols=100, desc='Overall Progress', leave=True, position=0)
     offset = 1
     last_epoch_time = progress._time()
-    global_iteration = checkpoint['global_iteration'] if args.resume and os.path.isfile(args.resume) else 0
+    global_iteration = checkpoint['global_iteration'] if args.resume and os.path.isfile(args.resume) and 'global_iteration' in checkpoint else 0
 
     for epoch in progress:
         if args.inference or (args.render_validation and ((epoch - 1) % args.validation_frequency) == 0):

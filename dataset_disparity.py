@@ -246,6 +246,73 @@ class Monkaa(data.Dataset):
     def __len__(self):
         return self.size * self.replicates
 
+class KITTI(data.Dataset):
+    def __init__(self, args, is_cropped=False, root='~/data/data_scene_flow', dstype='training', replicates=1):
+        self.args = args
+        self.is_cropped = is_cropped
+        self.crop_size = args.crop_size
+        self.render_size = args.inference_size
+        self.replicates = replicates
+
+        l_image_dir = join(root, dstype,'image_2')
+        r_image_dir = join(root, dstype, 'image_3')
+
+        disp_dir = join(root, dstype, 'disp_occ_0')
+
+        self.image_list = []
+        self.disp_list = []
+
+        images_1 = sorted(glob(join(l_image_dir, '*_10.png')))
+        images_2 = sorted(glob(join(r_image_dir, '*_10.png')))
+        disps = sorted(glob(join(disp_dir, '*.png')))
+        assert len(images_1)==len(images_2)
+        assert len(disps)==len(images_1)
+
+        for i in range(len(disps)):
+            self.image_list += [[images_1[i], images_2[i]]]
+            self.disp_list += [disps[i]]
+
+        assert len(self.image_list) == len(self.disp_list)
+
+        self.size = len(self.image_list)
+        self.frame_size = frame_utils.read_gen(self.image_list[0][0]).shape
+
+        if (self.render_size[0] < 0) or (self.render_size[1] < 0) or (self.frame_size[0] % 64) or (
+            self.frame_size[1] % 64):
+            self.render_size[0] = ((self.frame_size[0]) / 64) * 64
+            self.render_size[1] = ((self.frame_size[1]) / 64) * 64
+
+        args.inference_size = self.render_size
+
+    def __getitem__(self, index):
+        index = index % self.size
+
+        img1 = frame_utils.read_gen(self.image_list[index][0])
+        img2 = frame_utils.read_gen(self.image_list[index][1])
+
+        disp = frame_utils.read_gen(self.disp_list[index]).astype(float)/256.0
+
+        images = [img1, img2]
+        if self.is_cropped:
+            cropper = StaticRandomCrop(self.crop_size)
+            images = map(cropper, images)
+            disp = cropper(disp)
+        else:
+            cropper = StaticCenterCrop(self.render_size)
+            images = map(cropper, images)
+            disp = cropper(disp)
+
+        images = np.array(images).transpose(3, 0, 1, 2)
+        disp = disp.transpose(2, 0, 1)
+        disp = disp[:2,:,:]
+        images = torch.from_numpy(images.astype(np.float32))
+        disp = torch.from_numpy(disp.astype(np.float32))
+
+        return [images], [disp]
+
+    def __len__(self):
+        return self.size * self.replicates
+
 class ImagesFromFolder(data.Dataset):
     def __init__(self, args, is_cropped, root = '/path/to/frames/only/folder', iext = 'png', replicates = 1):
         self.args = args
