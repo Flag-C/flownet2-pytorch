@@ -5,3 +5,5 @@ _ext
 work
 work/*
 _ext/
+.idea/*
+.idea
