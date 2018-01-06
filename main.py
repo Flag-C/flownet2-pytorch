@@ -205,15 +205,6 @@ if __name__ == '__main__':
                 args.start_epoch = checkpoint['epoch']
             best_err = checkpoint['best_EPE']
             model_and_loss.module.model.load_state_dict(checkpoint['state_dict'],strict=False)
-            # """
-            # temporary load
-            # """
-            #model_and_loss.module.model.flownetc.load_state_dict(checkpoint['state_dict'])
-            #
-            # for param in model_and_loss.module.model.flownets_1.parameters():
-            #      param.requires_grad = False
-            # for (param1,param2) in zip(model_and_loss.module.model.flownets_1.parameters(),model_and_loss.module.model.flownets_2.parameters()):
-            #     param2.data[:] = param1.data[:]
             block.log("Loaded checkpoint '{}' (at epoch {})".format(args.resume, checkpoint['epoch']))
 
         elif args.resume and args.inference:

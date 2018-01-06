@@ -175,7 +175,7 @@ class FlyingChairs(data.Dataset):
     return self.size * self.replicates
 
 class FlyingThings(data.Dataset):
-  def __init__(self, args, is_cropped, root = '/data/qizhicai/flyingthings', dstype = 'frames_cleanpass', replicates = 1):
+  def __init__(self, args, is_cropped, root = '/path/to/flyingthings', dstype = 'frames_cleanpass', replicates = 1):
     self.args = args
     self.is_cropped = is_cropped
     self.crop_size = args.crop_size
@@ -249,7 +249,7 @@ class FlyingThingsFinal(FlyingThings):
         super(FlyingThingsFinal, self).__init__(args, is_cropped = is_cropped, root = root, dstype = 'frames_finalpass', replicates = replicates)
 
 class Driving(data.Dataset):
-    def __init__(self, args, is_cropped, root='/data/qizhicai/driving', dstype='frames_cleanpass', replicates=1):
+    def __init__(self, args, is_cropped, root='/path/to/driving', dstype='frames_cleanpass', replicates=1):
         self.args = args
         self.is_cropped = is_cropped
         self.crop_size = args.crop_size
@@ -455,7 +455,7 @@ class KITTI(data.Dataset):
 
 
 class ChairsSDHom(data.Dataset):
-  def __init__(self, args, is_cropped, root = '/data/qizhicai/ChairsSDHom/data', dstype = 'train', replicates = 1):
+  def __init__(self, args, is_cropped, root = '/path/to/ChairsSDHom/data', dstype = 'train', replicates = 1):
     self.args = args
     self.is_cropped = is_cropped
     self.crop_size = args.crop_size
@@ -536,8 +536,8 @@ class ConcatDataset(torch.utils.data.Dataset):
 
 class mixchairsandthings(data.Dataset):
     def __init__(self, args, is_cropped=False, root = ' ', replicates=1):
-        self.datasets = (FlyingThings(args=args,is_cropped=is_cropped,replicates=replicates,root = '/data/qizhicai/flyingthings'),
-                         ChairsSDHom(args=args,is_cropped=is_cropped,replicates=replicates,root = '/data/qizhicai/ChairsSDHom/data'))
+        self.datasets = (FlyingThings(args=args,is_cropped=is_cropped,replicates=replicates,root = '/path/to/flyingthings'),
+                         ChairsSDHom(args=args,is_cropped=is_cropped,replicates=replicates,root = '/path/to/ChairsSDHom/data'))
     def __getitem__(self, i):
         frac = np.random.random()
         if frac>0.25:
